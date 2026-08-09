@@ -75,7 +75,7 @@ Known false positives, if a message also contains a keyword: card last-four
 Clone anywhere, then link the two files Hammerspoon needs into `~/.hammerspoon`:
 
 ```bash
-git clone https://github.com/USER/REPO.git && cd REPO
+git clone https://github.com/cemre/messages-2fa.git && cd messages-2fa
 ln -sfn "$PWD/hammerspoon/twofa.lua"      ~/.hammerspoon/twofa.lua
 ln -sfn "$PWD/scripts/find-2fa-codes.sh"  ~/.hammerspoon/find-2fa-codes.sh
 ```
