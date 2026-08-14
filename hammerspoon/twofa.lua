@@ -123,7 +123,10 @@ local function pasteCode(code)
   end
 end
 
-local function notifyCode(code, sender)
+-- The sender is deliberately not shown. It is almost always a bare short code
+-- like "36397", which names no recognisable service and reads as noise next to
+-- the thing you actually came for.
+local function notifyCode(code)
   -- Captured before the notification exists, so it reflects where you were
   -- working when the text landed rather than anything the click changed.
   appAtArrival = hs.application.frontmostApplication()
@@ -141,7 +144,6 @@ local function notifyCode(code, sender)
     end
   end, {
     title = "2FA code: " .. code,
-    subTitle = (sender ~= "" and sender ~= nil) and ("from " .. sender) or nil,
     informativeText = "Click to type it into " ..
       ((appAtArrival and appAtArrival:name()) or "the front app") .. ".",
     hasActionButton = true,
@@ -177,13 +179,15 @@ local function poll()
   end
   dbErrorNotified = false
 
+  -- The finder also emits the sender as a third field; it is matched past but
+  -- not captured, since nothing downstream displays it.
   for line in (out or ""):gmatch("[^\n]+") do
-    local rowid, code, sender = line:match("^(%d+)\t(%d+)\t(.*)$")
+    local rowid, code = line:match("^(%d+)\t(%d+)\t")
     if rowid then
       -- Advance the floor before notifying, so a failure in the notification
       -- path can't leave this code to fire again on the next poll.
       lastRowId = math.max(lastRowId, tonumber(rowid))
-      notifyCode(code, sender)
+      notifyCode(code)
     end
   end
 end
@@ -230,8 +234,8 @@ end
 
 -- Exercises the notification and both buttons without waiting for a real text:
 --   twofa.testNotify()
-function M.testNotify(code, sender)
-  notifyCode(code or "123456", sender or "+15550000000")
+function M.testNotify(code)
+  notifyCode(code or "123456")
   return M
 end
 

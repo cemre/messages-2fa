@@ -10,7 +10,6 @@ you were using, followed by Return.
 
 ```
 2FA code: 481902
-from 36397
 Click to type it into Google Chrome.                     [ Options ⌄ ]
 ```
 
