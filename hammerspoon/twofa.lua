@@ -42,6 +42,33 @@ local config = {
 
 local HAMMERSPOON_BUNDLE_ID = "org.hammerspoon.Hammerspoon"
 
+-- Apps that transmit what you type. Typing a code into one of these and pressing
+-- Return does not fill a login form, it broadcasts the code -- to the very
+-- sender it came from, in the case of Messages.
+--
+-- Messages is not a hypothetical here. A code arrives while you are looking at
+-- the conversation it arrived in, which makes Messages the app that was in
+-- front, which makes it the app focus gets handed back to on click.
+--
+-- Add any other app you would not want a live code typed into.
+local NEVER_TYPE_INTO = {
+  ["com.apple.MobileSMS"]              = "Messages",
+  ["com.apple.iChat"]                  = "Messages",     -- pre-Sierra bundle id
+  ["com.tinyspeck.slackmacgap"]        = "Slack",
+  ["net.whatsapp.WhatsApp"]            = "WhatsApp",
+  ["ru.keepcoder.Telegram"]            = "Telegram",
+  ["com.hnc.Discord"]                  = "Discord",
+  ["org.whispersystems.signal-desktop"]= "Signal",
+  [HAMMERSPOON_BUNDLE_ID]              = "Hammerspoon",  -- no text field to hit
+}
+
+-- Display name when this bundle id must never receive a typed code, nil when it
+-- is safe. Pure, and exported so it can be asserted against directly.
+function M.blockedTargetName(bundleID)
+  if not bundleID then return nil end
+  return NEVER_TYPE_INTO[bundleID]
+end
+
 local lastRowId = 0
 local nextAllowedPoll = 0
 local dbErrorNotified = false
@@ -88,6 +115,20 @@ local function copyCode(code)
 end
 
 local function emitKeys(code)
+  -- The last line of defence, and the only one that sees the truth: it runs
+  -- after any activation has settled, so it inspects the window actually about
+  -- to receive the keystrokes rather than one predicted earlier. Every path
+  -- into typing goes through here, including the user switching apps between
+  -- the notification appearing and clicking it.
+  local front = hs.application.frontmostApplication()
+  local blocked = M.blockedTargetName(front and front:bundleID())
+  if blocked then
+    copyCode(code)
+    hs.alert.show("2FA: won't type into " .. blocked .. " -- copied instead")
+    log("refused to type into " .. blocked .. "; copied to clipboard instead")
+    return
+  end
+
   hs.eventtap.keyStrokes(code)
   if config.pressReturn then
     -- Let the field process the digits before submitting; some inputs move
@@ -114,9 +155,13 @@ local function pasteCode(code)
   -- Any other frontmost app means the user moved there deliberately -- type
   -- into it and leave the window order alone.
   local front = hs.application.frontmostApplication()
-  if front and front:bundleID() == HAMMERSPOON_BUNDLE_ID and appAtArrival then
-    appAtArrival:activate()
-    log("restoring focus to " .. (appAtArrival:name() or "?"))
+  local restoreTo = appAtArrival
+  if restoreTo and M.blockedTargetName(restoreTo:bundleID()) then
+    restoreTo = nil   -- fall through to emitKeys, which refuses and copies
+  end
+  if front and front:bundleID() == HAMMERSPOON_BUNDLE_ID and restoreTo then
+    restoreTo:activate()
+    log("restoring focus to " .. (restoreTo:name() or "?"))
     hs.timer.doAfter(config.refocusDelay, function() emitKeys(code) end)
   else
     emitKeys(code)
@@ -128,8 +173,10 @@ end
 -- the thing you actually came for.
 local function notifyCode(code)
   -- Captured before the notification exists, so it reflects where you were
-  -- working when the text landed rather than anything the click changed.
-  appAtArrival = hs.application.frontmostApplication()
+  -- working when the text landed rather than anything the click changed. An app
+  -- that must never be typed into is not worth remembering as a return target.
+  local front = hs.application.frontmostApplication()
+  appAtArrival = (front and not M.blockedTargetName(front:bundleID())) and front or nil
 
   local n = hs.notify.new(function(notification)
     local kind = notification:activationType()
@@ -144,8 +191,9 @@ local function notifyCode(code)
     end
   end, {
     title = "2FA code: " .. code,
-    informativeText = "Click to type it into " ..
-      ((appAtArrival and appAtArrival:name()) or "the front app") .. ".",
+    informativeText = appAtArrival
+      and ("Click to type it into " .. (appAtArrival:name() or "the front app") .. ".")
+      or "Click to copy -- the app in front can't be typed into.",
     hasActionButton = true,
     actionButtonTitle = "Paste",
     additionalActions = { "Copy" },

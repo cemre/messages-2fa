@@ -130,6 +130,26 @@ back to it — but only when Hammerspoon itself ended up in front. If you moved 
 some other app deliberately, the code is typed there and the window order is left
 alone.
 
+### It will not type into a chat app
+
+Some apps transmit what you type. Typing a live code into one and pressing Return
+does not fill a login form — it sends the code.
+
+Messages is the case that bites. A code arrives while you are looking at the
+conversation it arrived in, so Messages is the app that was in front, so Messages
+is where focus gets handed back to on click. The code then goes into the compose
+field, and Return sends it to whoever texted it to you.
+
+So the frontmost app is checked immediately before any keystroke is emitted, and
+a code is never typed into Messages, Slack, WhatsApp, Telegram, Discord, Signal,
+or Hammerspoon itself. It is copied to the clipboard instead, with a message
+saying so. Edit `NEVER_TYPE_INTO` at the top of `hammerspoon/twofa.lua` to add
+your own.
+
+The check runs at the last possible moment rather than at click time, so it also
+covers switching to a chat app between the notification appearing and clicking
+it.
+
 ## Configuration
 
 Top of `hammerspoon/twofa.lua`:
@@ -147,6 +167,13 @@ Top of `scripts/find-2fa-codes.sh`: `MIN_DIGITS` / `MAX_DIGITS`, default 4 and 8
 
 ```bash
 ./tests/matcher-test.sh
+```
+
+The paste-target denylist is asserted separately. It needs the `hs` modules, so
+run it from the Hammerspoon Console (menu bar icon → Console):
+
+```lua
+dofile("/absolute/path/to/tests/twofa-selftest.lua")
 ```
 
 Fixtures run through `--stdin`, so no database, no permissions, no waiting for a
