@@ -96,7 +96,8 @@ local function runFinder(args)
   return out, ok, rc
 end
 
-local function copyCode(code)
+-- quiet suppresses the confirmation, for callers that show their own.
+local function copyCode(code, quiet)
   -- org.nspasteboard.ConcealedType is the convention clipboard managers watch
   -- to keep an entry out of their history. Raycast honours it.
   local wrote = pcall(function()
@@ -110,7 +111,7 @@ local function copyCode(code)
   if not wrote or hs.pasteboard.getContents() ~= code then
     hs.pasteboard.setContents(code)
   end
-  hs.alert.show("2FA code copied")
+  if not quiet then hs.alert.show("2FA code copied") end
   log("copied " .. #code .. "-digit code")
 end
 
@@ -123,7 +124,7 @@ local function emitKeys(code)
   local front = hs.application.frontmostApplication()
   local blocked = M.blockedTargetName(front and front:bundleID())
   if blocked then
-    copyCode(code)
+    copyCode(code, true)
     hs.alert.show("2FA: won't type into " .. blocked .. " -- copied instead")
     log("refused to type into " .. blocked .. "; copied to clipboard instead")
     return
