@@ -46,9 +46,9 @@ local HAMMERSPOON_BUNDLE_ID = "org.hammerspoon.Hammerspoon"
 -- Return does not fill a login form, it broadcasts the code -- to the very
 -- sender it came from, in the case of Messages.
 --
--- Messages is not a hypothetical here. A code arrives while you are looking at
--- the conversation it arrived in, which makes Messages the app that was in
--- front, which makes it the app focus gets handed back to on click.
+-- Messages is not a hypothetical here. If you are still reading the conversation
+-- the code arrived in when you click, Messages is the app the keystrokes would
+-- go to -- into the compose field, with Return sending the code to its sender.
 --
 -- Add any other app you would not want a live code typed into.
 local NEVER_TYPE_INTO = {
@@ -74,10 +74,31 @@ local nextAllowedPoll = 0
 local dbErrorNotified = false
 local debounceTimer, safetyTimer, pathWatcher
 
--- Whatever was in front when the code arrived, which is where the login field
--- almost certainly is. Only used to undo the focus change that clicking a
--- notification causes -- see pasteCode.
-local appAtArrival
+-- The app you were last using, Hammerspoon excluded. Kept current by an
+-- application watcher rather than sampled when the code arrives, because the
+-- target that matters is where you are when you CLICK -- you may well read the
+-- notification, switch to the login window, and only then click.
+--
+-- It cannot be read at click time instead: clicking a notification's body
+-- activates the app that posted it, so by the time the callback runs the
+-- frontmost app is Hammerspoon. This record is the only thing that still knows.
+--
+-- Messages and friends are tracked here like any other app. Excluding them would
+-- silently retarget to whatever you used before them; better to remember the
+-- truth and refuse at the point of typing.
+local lastActiveApp
+local appWatcher
+
+local function onAppActivated(_, event, app)
+  if event ~= hs.application.watcher.activated then return end
+  if not app or app:bundleID() == HAMMERSPOON_BUNDLE_ID then return end
+  lastActiveApp = app
+end
+
+-- Name of the app a click would type into, for diagnostics from the Console.
+function M.lastActiveAppName()
+  return lastActiveApp and lastActiveApp:name() or nil
+end
 
 -- Records what happened and when, never the code itself.
 local function log(message)
@@ -148,24 +169,38 @@ local function pasteCode(code)
     return
   end
 
-  -- Clicking a notification's body activates the app that posted it, so a click
-  -- on this one can pull Hammerspoon in front of the login window and swallow
-  -- the keystrokes. Clicking an action button does not. Rather than assume
-  -- which happened, look: Hammerspoon in front is never where a code should be
-  -- typed, so in that one case hand focus back to where the code arrived.
-  -- Any other frontmost app means the user moved there deliberately -- type
-  -- into it and leave the window order alone.
+  -- Clicking the body activates Hammerspoon; clicking an action button does not.
+  -- So the frontmost app is the right target when it is anything else, and the
+  -- watcher's record is the right target when Hammerspoon has just taken over.
   local front = hs.application.frontmostApplication()
-  local restoreTo = appAtArrival
-  if restoreTo and M.blockedTargetName(restoreTo:bundleID()) then
-    restoreTo = nil   -- fall through to emitKeys, which refuses and copies
+  local target = front
+  if not front or front:bundleID() == HAMMERSPOON_BUNDLE_ID then
+    target = lastActiveApp
   end
-  if front and front:bundleID() == HAMMERSPOON_BUNDLE_ID and restoreTo then
-    restoreTo:activate()
-    log("restoring focus to " .. (restoreTo:name() or "?"))
-    hs.timer.doAfter(config.refocusDelay, function() emitKeys(code) end)
-  else
+
+  if not target or not target:isRunning() then
+    copyCode(code, true)
+    hs.alert.show("2FA: no app to type into -- copied instead")
+    log("no paste target; copied to clipboard instead")
+    return
+  end
+
+  -- Named here as well as in emitKeys so the message can say Messages rather
+  -- than Hammerspoon, and so a blocked app is never pulled to the front first.
+  local blocked = M.blockedTargetName(target:bundleID())
+  if blocked then
+    copyCode(code, true)
+    hs.alert.show("2FA: won't type into " .. blocked .. " -- copied instead")
+    log("refused to type into " .. blocked .. "; copied to clipboard instead")
+    return
+  end
+
+  if front and front:pid() == target:pid() then
     emitKeys(code)
+  else
+    target:activate()
+    log("restoring focus to " .. (target:name() or "?"))
+    hs.timer.doAfter(config.refocusDelay, function() emitKeys(code) end)
   end
 end
 
@@ -173,12 +208,6 @@ end
 -- like "36397", which names no recognisable service and reads as noise next to
 -- the thing you actually came for.
 local function notifyCode(code)
-  -- Captured before the notification exists, so it reflects where you were
-  -- working when the text landed rather than anything the click changed. An app
-  -- that must never be typed into is not worth remembering as a return target.
-  local front = hs.application.frontmostApplication()
-  appAtArrival = (front and not M.blockedTargetName(front:bundleID())) and front or nil
-
   local n = hs.notify.new(function(notification)
     local kind = notification:activationType()
     local types = hs.notify.activationTypes
@@ -192,9 +221,9 @@ local function notifyCode(code)
     end
   end, {
     title = "2FA code: " .. code,
-    informativeText = appAtArrival
-      and ("Click to type it into " .. (appAtArrival:name() or "the front app") .. ".")
-      or "Click to copy -- the app in front can't be typed into.",
+    -- Deliberately names no app. The target is decided when you click, which
+    -- may be several app switches after this text was written.
+    informativeText = "Click to type it into the app you're using.",
     hasActionButton = true,
     actionButtonTitle = "Paste",
     additionalActions = { "Copy" },
@@ -270,6 +299,12 @@ function M.start()
     os.getenv("HOME") .. "/Library/Messages", schedulePoll):start()
   safetyTimer = hs.timer.doEvery(config.safetyPollSeconds, poll)
 
+  -- Seed from the current frontmost app, since no activation event will fire
+  -- for an app that was already in front when this loaded.
+  local front = hs.application.frontmostApplication()
+  if front and front:bundleID() ~= HAMMERSPOON_BUNDLE_ID then lastActiveApp = front end
+  appWatcher = hs.application.watcher.new(onAppActivated):start()
+
   log("started at rowid " .. lastRowId)
   return M
 end
@@ -278,6 +313,7 @@ function M.stop()
   if pathWatcher then pathWatcher:stop(); pathWatcher = nil end
   if safetyTimer then safetyTimer:stop(); safetyTimer = nil end
   if debounceTimer then debounceTimer:stop(); debounceTimer = nil end
+  if appWatcher then appWatcher:stop(); appWatcher = nil end
   return M
 end
 

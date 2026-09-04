@@ -10,7 +10,7 @@ you were using, followed by Return.
 
 ```
 2FA code: 481902
-Click to type it into Google Chrome.                     [ Options ⌄ ]
+Click to type it into the app you're using.              [ Options ⌄ ]
 ```
 
 There is also a Raycast command for pulling the most recent code on demand,
@@ -123,32 +123,35 @@ The Copy action tags the clipboard `org.nspasteboard.ConcealedType`, the
 convention clipboard managers watch, so Raycast's history will not retain your
 codes.
 
-Clicking a notification's body activates the app that posted it, which would
-otherwise mean the keystrokes land in Hammerspoon instead of your login form. So
-the app that was in front when the code arrived is recorded, and focus is handed
-back to it — but only when Hammerspoon itself ended up in front. If you moved to
-some other app deliberately, the code is typed there and the window order is left
-alone.
+The code goes to the app you were using when you **clicked** — not when it
+arrived. Those routinely differ: the code lands while you are reading Messages,
+you switch to the login window, and only then do you click.
+
+That target cannot just be read at click time. Clicking a notification's body
+activates the app that posted it, so by the time the handler runs the frontmost
+app is Hammerspoon — the answer is already gone. An application watcher keeps a
+running record of the last app you activated, and that record is what a body
+click uses. Action buttons under **Options** do not steal focus, so there the
+frontmost app is used directly.
 
 ### It will not type into a chat app
 
 Some apps transmit what you type. Typing a live code into one and pressing Return
 does not fill a login form — it sends the code.
 
-Messages is the case that bites. A code arrives while you are looking at the
-conversation it arrived in, so Messages is the app that was in front, so Messages
-is where focus gets handed back to on click. The code then goes into the compose
-field, and Return sends it to whoever texted it to you.
+Messages is the case that bites. If you are still reading the conversation the
+code arrived in when you click, Messages is where the keystrokes go — into the
+compose field, with Return sending the code straight back to whoever texted it.
 
-So the frontmost app is checked immediately before any keystroke is emitted, and
+So the target is checked immediately before any keystroke is emitted, and
 a code is never typed into Messages, Slack, WhatsApp, Telegram, Discord, Signal,
 or Hammerspoon itself. It is copied to the clipboard instead, with a message
 saying so. Edit `NEVER_TYPE_INTO` at the top of `hammerspoon/twofa.lua` to add
 your own.
 
-The check runs at the last possible moment rather than at click time, so it also
-covers switching to a chat app between the notification appearing and clicking
-it.
+The check runs at the last possible moment, after any window activation has
+settled, so it sees the window actually about to receive the keys rather than one
+predicted earlier.
 
 ## Configuration
 
@@ -159,7 +162,7 @@ Top of `hammerspoon/twofa.lua`:
 | `pressReturn` | `true` | turn off if a site auto-submits on the last digit |
 | `maxAgeMinutes` | `15` | older codes have expired anyway |
 | `safetyPollSeconds` | `15` | fallback poll behind FSEvents |
-| `refocusDelay` | `0.15` | pause after restoring focus, before typing |
+| `refocusDelay` | `0.15` | pause after switching to the target app, before typing |
 
 Top of `scripts/find-2fa-codes.sh`: `MIN_DIGITS` / `MAX_DIGITS`, default 4 and 8.
 
